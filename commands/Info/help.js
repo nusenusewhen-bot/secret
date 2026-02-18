@@ -7,7 +7,7 @@ module.exports = {
     .setDescription('Show all commands')
     .addStringOption(option =>
       option.setName('category')
-        .setDescription('Specific category')
+        .setDescription('Filter by category')
         .setRequired(false)
         .addChoices(
           { name: 'Owner', value: 'Owner' },
@@ -15,121 +15,117 @@ module.exports = {
           { name: 'Moderation', value: 'Moderation' },
           { name: 'Economy', value: 'Economy' },
           { name: 'Fun', value: 'Fun' },
-          { name: 'Games', value: 'Games' },
-          { name: 'Utility', value: 'Utility' },
-          { name: 'Info', value: 'Info' }
+          { name: 'Games', value: 'Games' }
         )),
   
-  // Prefix command support (!help)
+  // PREFIX COMMAND: !help or !help category
   messageRun: async (message, args, client) => {
-    const category = args[0];
-    await sendHelp(message, client, category, false);
+    const categoryFilter = args[0];
+    await sendHelp(message, client, categoryFilter, false);
   },
   
-  // Slash command support (/help)
+  // SLASH COMMAND: /help
   async execute(interaction, client) {
-    const category = interaction.options.getString('category');
-    await sendHelp(interaction, client, category, true);
+    const categoryFilter = interaction.options.getString('category');
+    await sendHelp(interaction, client, categoryFilter, true);
   }
 };
 
 async function sendHelp(context, client, categoryFilter, isSlash) {
   const commands = client.commands;
-  const categories = {};
   
-  // Group commands by category
+  if (commands.size === 0) {
+    return reply(context, '❌ No commands loaded!', isSlash);
+  }
+  
+  // Group by category
+  const categories = {};
   commands.forEach(cmd => {
     const cat = cmd.category || 'Misc';
     if (!categories[cat]) categories[cat] = [];
     categories[cat].push(cmd);
   });
   
-  // If specific category requested
+  // If filtering by category
   if (categoryFilter && categories[categoryFilter]) {
-    const embed = createCategoryEmbed(categoryFilter, categories[categoryFilter]);
+    const embed = createCategoryEmbed(categoryFilter, categories[categoryFilter], isSlash);
     return reply(context, { embeds: [embed] }, isSlash);
   }
   
-  // Main help menu - show categories overview
+  // Main help embed
   const embed = new EmbedBuilder()
-    .setTitle(`${config.emojis.bot} Command Help`)
-    .setDescription(`Total Commands: **${commands.size}**\nPrefix: \`${config.prefix}\`\n\nClick buttons below to view categories:`)
+    .setTitle(`${config.emojis.bot} Command List`)
+    .setDescription(`**Total Commands:** ${commands.size}\n**Prefix:** \`${config.prefix}\`\n\nUse buttons below or \`${config.prefix}help <category>\``)
     .setColor(config.colors.primary)
-    .setFooter({ text: `Requested by ${isSlash ? context.user.tag : context.author.tag}` });
+    .setThumbnail(client.user.displayAvatarURL());
   
-  // Add fields for each category
+  // Add category fields
   Object.keys(categories).sort().forEach(cat => {
     const count = categories[cat].length;
-    const visible = categories[cat].filter(c => !c.ownerOnly).length;
-    const ownerOnly = categories[cat].filter(c => c.ownerOnly).length;
-    
-    let value = `${count} commands`;
-    if (ownerOnly > 0) value += ` (${ownerOnly} owner)`;
+    const cmdList = categories[cat]
+      .slice(0, 3)
+      .map(c => `\`${c.data.name}\``)
+      .join(', ') + (categories[cat].length > 3 ? '...' : '');
     
     embed.addFields({
-      name: `${getCatEmoji(cat)} ${cat}`,
-      value: value,
+      name: `${getEmoji(cat)} ${cat} (${count})`,
+      value: cmdList || 'No commands',
       inline: true
     });
   });
   
-  // Create category buttons
+  embed.setFooter({ text: `Requested by ${isSlash ? context.user.tag : context.author.tag}` });
+  
+  // Create buttons
   const rows = createCategoryButtons(Object.keys(categories).sort());
   
-  const message = await reply(context, { embeds: [embed], components: rows }, isSlash);
+  const msg = await reply(context, { embeds: [embed], components: rows }, isSlash);
   
-  // Collector for button interactions
-  const filter = i => i.user.id === (isSlash ? context.user.id : context.author.id);
-  const collector = message.createMessageComponentCollector({ filter, time: 120000 });
+  // Button collector
+  const userId = isSlash ? context.user.id : context.author.id;
+  const filter = i => i.user.id === userId;
+  const collector = msg.createMessageComponentCollector({ filter, time: 60000 });
   
   collector.on('collect', async i => {
-    const selectedCat = i.customId.replace('help_', '');
+    const id = i.customId;
     
-    if (selectedCat === 'home') {
+    if (id === 'help_home') {
       await i.update({ embeds: [embed], components: rows });
-    } else if (categories[selectedCat]) {
-      const catEmbed = createCategoryEmbed(selectedCat, categories[selectedCat]);
-      const backRow = new ActionRowBuilder()
-        .addComponents(
-          new ButtonBuilder()
-            .setCustomId('help_home')
-            .setLabel('← Back')
-            .setStyle(ButtonStyle.Secondary)
-        );
-      await i.update({ embeds: [catEmbed], components: [backRow] });
+    } else {
+      const cat = id.replace('help_', '');
+      if (categories[cat]) {
+        const catEmbed = createCategoryEmbed(cat, categories[cat], isSlash);
+        const backRow = new ActionRowBuilder()
+          .addComponents(
+            new ButtonBuilder()
+              .setCustomId('help_home')
+              .setLabel('← Back')
+              .setStyle(ButtonStyle.Secondary)
+          );
+        await i.update({ embeds: [catEmbed], components: [backRow] });
+      }
     }
   });
   
   collector.on('end', () => {
-    message.edit({ components: [] }).catch(() => {});
+    msg.edit({ components: [] }).catch(() => {});
   });
 }
 
-function createCategoryEmbed(category, commands) {
+function createCategoryEmbed(category, commands, isSlash) {
+  const prefix = isSlash ? '/' : config.prefix;
+  
   const embed = new EmbedBuilder()
-    .setTitle(`${getCatEmoji(category)} ${category} Commands (${commands.length})`)
+    .setTitle(`${getEmoji(category)} ${category} Commands`)
     .setColor(config.colors.primary)
-    .setTimestamp();
-  
-  // Sort commands alphabetically
-  commands.sort((a, b) => a.data.name.localeCompare(b.data.name));
-  
-  let description = '';
-  commands.forEach(cmd => {
-    const name = cmd.data.name;
-    const desc = cmd.data.description;
-    const ownerTag = cmd.ownerOnly ? '👑 ' : '';
-    const adminTag = cmd.adminOnly ? '⚡ ' : '';
-    
-    description += `\`${config.prefix}${name}\` ${ownerTag}${adminTag}- ${desc}\n`;
-  });
-  
-  // Split if too long (Discord limit 4096)
-  if (description.length > 4000) {
-    description = description.substring(0, 4000) + '...';
-  }
-  
-  embed.setDescription(description || 'No commands in this category.');
+    .setDescription(commands
+      .sort((a, b) => a.data.name.localeCompare(b.data.name))
+      .map(cmd => {
+        const tag = cmd.ownerOnly ? '👑 ' : cmd.adminOnly ? '⚡ ' : '';
+        return `${tag}\`${prefix}${cmd.data.name}\` - ${cmd.data.description}`;
+      })
+      .join('\n')
+    );
   
   return embed;
 }
@@ -137,13 +133,11 @@ function createCategoryEmbed(category, commands) {
 function createCategoryButtons(categories) {
   const rows = [];
   let currentRow = new ActionRowBuilder();
-  let count = 0;
   
-  categories.forEach(cat => {
-    if (count === 5) {
+  categories.forEach((cat, index) => {
+    if (index % 5 === 0 && index > 0) {
       rows.push(currentRow);
       currentRow = new ActionRowBuilder();
-      count = 0;
     }
     
     currentRow.addComponents(
@@ -151,17 +145,18 @@ function createCategoryButtons(categories) {
         .setCustomId(`help_${cat}`)
         .setLabel(cat)
         .setStyle(ButtonStyle.Primary)
-        .setEmoji(getCatEmoji(cat))
     );
-    count++;
   });
   
-  if (count > 0) rows.push(currentRow);
+  if (currentRow.components.length > 0) {
+    rows.push(currentRow);
+  }
+  
   return rows;
 }
 
-function getCatEmoji(category) {
-  const emojis = {
+function getEmoji(category) {
+  const map = {
     'Owner': '👑',
     'Admin': '⚡',
     'Moderation': '🛡️',
@@ -170,14 +165,16 @@ function getCatEmoji(category) {
     'Games': '🎯',
     'Utility': '🛠️',
     'Info': 'ℹ️',
-    'Social': '👥',
     'Misc': '📦'
   };
-  return emojis[category] || '📄';
+  return map[category] || '📄';
 }
 
 async function reply(context, payload, isSlash) {
   if (isSlash) {
+    if (context.replied || context.deferred) {
+      return await context.editReply(payload);
+    }
     return await context.reply({ ...payload, fetchReply: true });
   } else {
     return await context.reply(payload);
