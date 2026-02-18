@@ -6,7 +6,12 @@
       "providers": ["python"],
       "phases": {
         "setup": {
-          "nixPkgs": ["protobuf", "gcc"]
+          "nixPkgs": [
+            "python312",
+            "python312Packages.pip",
+            "protobuf",
+            "gcc"
+          ]
         }
       }
     }
