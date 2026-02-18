@@ -1,2 +1,1 @@
-# requirements.txt
 git+https://github.com/dolfies/discord.py-self@master
