@@ -1,12 +1,16 @@
 const fs = require('fs');
 const path = require('path');
-const { Collection } = require('discord.js');
-const config = require('../config');
 
-function loadCommands(client) {
+function load(client) {
   const commandsPath = path.join(__dirname, '..', 'commands');
-  const categories = fs.readdirSync(commandsPath);
   
+  if (!fs.existsSync(commandsPath)) {
+    console.log('⚠️ Commands folder not found, creating...');
+    fs.mkdirSync(commandsPath, { recursive: true });
+    return;
+  }
+  
+  const categories = fs.readdirSync(commandsPath);
   let totalCommands = 0;
   
   for (const category of categories) {
@@ -17,30 +21,27 @@ function loadCommands(client) {
     
     for (const file of commandFiles) {
       const filePath = path.join(categoryPath, file);
-      const command = require(filePath);
-      
-      if ('data' in command && 'execute' in command) {
-        command.category = category;
-        client.commands.set(command.data.name, command);
-        totalCommands++;
+      try {
+        const command = require(filePath);
         
-        if (command.aliases) {
-          command.aliases.forEach(alias => {
-            client.aliases.set(alias, command.data.name);
-          });
+        if ('data' in command && 'execute' in command) {
+          command.category = category;
+          client.commands.set(command.data.name, command);
+          totalCommands++;
+          
+          if (command.aliases) {
+            command.aliases.forEach(alias => {
+              client.aliases.set(alias, command.data.name);
+            });
+          }
         }
+      } catch (error) {
+        console.error(`Error loading command ${file}:`, error.message);
       }
     }
   }
   
-  console.log(`✅ Loaded ${totalCommands} commands across ${categories.length} categories`);
+  console.log(`✅ Loaded ${totalCommands} commands`);
 }
 
-function reloadCommands(client) {
-  client.commands.clear();
-  client.aliases.clear();
-  loadCommands(client);
-}
-
-module.exports = { load, reload: reloadCommands };
-module.exports.load = loadCommands;
+module.exports = { load };
