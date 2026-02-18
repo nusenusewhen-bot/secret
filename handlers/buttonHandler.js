@@ -1,10 +1,9 @@
 const fs = require('fs');
 const path = require('path');
 
-function loadButtons(client) {
+function load(client) {
   const buttonsPath = path.join(__dirname, '..', 'buttons');
   
-  // Create buttons folder if it doesn't exist
   if (!fs.existsSync(buttonsPath)) {
     fs.mkdirSync(buttonsPath, { recursive: true });
     console.log('📁 Created buttons folder');
@@ -15,16 +14,18 @@ function loadButtons(client) {
   
   for (const file of buttonFiles) {
     const filePath = path.join(buttonsPath, file);
-    const button = require(filePath);
-    
-    if ('data' in button && 'execute' in button) {
-      client.buttons.set(button.data.name, button);
-    } else {
-      console.log(`[WARNING] The button at ${filePath} is missing "data" or "execute" property.`);
+    try {
+      const button = require(filePath);
+      
+      if ('data' in button && 'execute' in button) {
+        client.buttons.set(button.data.name, button);
+      }
+    } catch (error) {
+      console.error(`Error loading button ${file}:`, error.message);
     }
   }
   
   console.log(`✅ Loaded ${client.buttons.size} buttons`);
 }
 
-module.exports = { load: loadButtons };
+module.exports = { load };
