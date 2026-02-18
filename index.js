@@ -2,7 +2,6 @@ require('dotenv').config();
 const { Client, GatewayIntentBits, Partials, Collection } = require('discord.js');
 const fs = require('fs');
 const path = require('path');
-const config = require('./config');
 
 const client = new Client({
   intents: [
@@ -14,8 +13,7 @@ const client = new Client({
     GatewayIntentBits.GuildMessageReactions,
     GatewayIntentBits.DirectMessages,
     GatewayIntentBits.GuildPresences,
-    GatewayIntentBits.GuildInvites,
-    GatewayIntentBits.GuildWebhooks
+    GatewayIntentBits.GuildInvites
   ],
   partials: [
     Partials.Channel,
@@ -33,29 +31,45 @@ const client = new Client({
 // Global Collections
 client.commands = new Collection();
 client.buttons = new Collection();
-client.selectMenus = new Collection();
-client.modals = new Collection();
 client.cooldowns = new Collection();
 client.aliases = new Collection();
 
 // Load Handlers
 const handlersPath = path.join(__dirname, 'handlers');
-const handlerFiles = fs.readdirSync(handlersPath).filter(file => file.endsWith('.js'));
-
-for (const file of handlerFiles) {
-  const filePath = path.join(handlersPath, file);
-  const handler = require(filePath);
-  if (handler.load) handler.load(client);
+if (fs.existsSync(handlersPath)) {
+  const handlerFiles = fs.readdirSync(handlersPath).filter(file => file.endsWith('.js'));
+  
+  for (const file of handlerFiles) {
+    const filePath = path.join(handlersPath, file);
+    try {
+      const handler = require(filePath);
+      if (handler.load) {
+        handler.load(client);
+      }
+    } catch (error) {
+      console.error(`Error loading handler ${file}:`, error);
+    }
+  }
 }
 
 // Error Handlers
-process.on('unhandledRejection', (error) => {
-  console.error('Unhandled Rejection:', error);
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
 });
 
 process.on('uncaughtException', (error) => {
   console.error('Uncaught Exception:', error);
-  process.exit(1);
+  // Don't exit immediately to prevent crash loops, but log it
 });
 
-client.login(process.env.TOKEN);
+// Login
+const token = process.env.TOKEN;
+if (!token) {
+  console.error('❌ No TOKEN found in .env file!');
+  process.exit(1);
+}
+
+client.login(token).catch(err => {
+  console.error('❌ Failed to login:', err.message);
+  process.exit(1);
+});
