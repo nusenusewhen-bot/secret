@@ -1,7 +1,7 @@
 {
   "name": "shop-bot",
   "version": "1.0.0",
-  "description": "Discord shop bot with price listings",
+  "description": "Discord shop bot with price listings and message copying",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
