@@ -1,5 +1,5 @@
 require('dotenv').config();
-const { Client, GatewayIntentBits, SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+const { Client, GatewayIntentBits, SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType, PermissionFlagsBits } = require('discord.js');
 
 const client = new Client({
     intents: [
@@ -74,7 +74,20 @@ client.once('ready', async () => {
     const commands = [
         new SlashCommandBuilder()
             .setName('shop')
-            .setDescription('Display the shop menu with all products')
+            .setDescription('Display the shop menu with all products'),
+        new SlashCommandBuilder()
+            .setName('say')
+            .setDescription('Send a message to a specific channel (Admin only)')
+            .addChannelOption(option => 
+                option.setName('channel')
+                    .setDescription('The channel to send the message to')
+                    .setRequired(true)
+                    .addChannelTypes(ChannelType.GuildText))
+            .addStringOption(option => 
+                option.setName('message')
+                    .setDescription('The message to send')
+                    .setRequired(true))
+            .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
     ];
     
     try {
@@ -86,85 +99,105 @@ client.once('ready', async () => {
 });
 
 client.on('interactionCreate', async (interaction) => {
-    if (interaction.isCommand()) {
-        if (interaction.commandName === 'shop') {
-            const embed = new EmbedBuilder()
-                .setTitle('🛒 Shop Menu')
-                .setDescription('If you want to purchase something and wanna know the price, click on which you wanna buy and it will tell the price.')
-                .setColor(0x5865F2)
-                .setTimestamp()
-                .setFooter({ text: 'Click a button below to view prices' });
+    if (!interaction.isCommand()) return;
+    
+    if (interaction.commandName === 'shop') {
+        const embed = new EmbedBuilder()
+            .setTitle('🛒 Shop Menu')
+            .setDescription('If you want to purchase something and wanna know the price, click on which you wanna buy and it will tell the price.')
+            .setColor(0x5865F2)
+            .setTimestamp()
+            .setFooter({ text: 'Click a button below to view prices' });
 
-            // Create button rows (max 5 buttons per row)
-            const row1 = new ActionRowBuilder()
-                .addComponents(
-                    new ButtonBuilder()
-                        .setCustomId('shop_members')
-                        .setLabel('Members')
-                        .setEmoji('👥')
-                        .setStyle(ButtonStyle.Primary),
-                    new ButtonBuilder()
-                        .setCustomId('shop_social')
-                        .setLabel('Social Boost')
-                        .setEmoji('📱')
-                        .setStyle(ButtonStyle.Primary),
-                    new ButtonBuilder()
-                        .setCustomId('shop_nitro')
-                        .setLabel('Nitro')
-                        .setEmoji('🎁')
-                        .setStyle(ButtonStyle.Primary),
-                    new ButtonBuilder()
-                        .setCustomId('shop_serverboost')
-                        .setLabel('Server Boost')
-                        .setEmoji('⚡')
-                        .setStyle(ButtonStyle.Primary)
-                );
+        const row1 = new ActionRowBuilder()
+            .addComponents(
+                new ButtonBuilder()
+                    .setCustomId('shop_members')
+                    .setLabel('Members')
+                    .setEmoji('👥')
+                    .setStyle(ButtonStyle.Primary),
+                new ButtonBuilder()
+                    .setCustomId('shop_social')
+                    .setLabel('Social Boost')
+                    .setEmoji('📱')
+                    .setStyle(ButtonStyle.Primary),
+                new ButtonBuilder()
+                    .setCustomId('shop_nitro')
+                    .setLabel('Nitro')
+                    .setEmoji('🎁')
+                    .setStyle(ButtonStyle.Primary),
+                new ButtonBuilder()
+                    .setCustomId('shop_serverboost')
+                    .setLabel('Server Boost')
+                    .setEmoji('⚡')
+                    .setStyle(ButtonStyle.Primary)
+            );
 
-            const row2 = new ActionRowBuilder()
-                .addComponents(
-                    new ButtonBuilder()
-                        .setCustomId('shop_decorations')
-                        .setLabel('Decorations')
-                        .setEmoji('🎨')
-                        .setStyle(ButtonStyle.Primary),
-                    new ButtonBuilder()
-                        .setCustomId('shop_accounts')
-                        .setLabel('Accounts')
-                        .setEmoji('👤')
-                        .setStyle(ButtonStyle.Primary),
-                    new ButtonBuilder()
-                        .setCustomId('shop_mcfa')
-                        .setLabel('MCFA')
-                        .setEmoji('🔐')
-                        .setStyle(ButtonStyle.Primary)
-                );
+        const row2 = new ActionRowBuilder()
+            .addComponents(
+                new ButtonBuilder()
+                    .setCustomId('shop_decorations')
+                    .setLabel('Decorations')
+                    .setEmoji('🎨')
+                    .setStyle(ButtonStyle.Primary),
+                new ButtonBuilder()
+                    .setCustomId('shop_accounts')
+                    .setLabel('Accounts')
+                    .setEmoji('👤')
+                    .setStyle(ButtonStyle.Primary),
+                new ButtonBuilder()
+                    .setCustomId('shop_mcfa')
+                    .setLabel('MCFA')
+                    .setEmoji('🔐')
+                    .setStyle(ButtonStyle.Primary)
+            );
 
+        await interaction.reply({
+            embeds: [embed],
+            components: [row1, row2]
+        });
+    }
+    
+    if (interaction.commandName === 'say') {
+        const channel = interaction.options.getChannel('channel');
+        const message = interaction.options.getString('message');
+        
+        try {
+            await channel.send(message);
             await interaction.reply({
-                embeds: [embed],
-                components: [row1, row2]
+                content: `✅ Message sent to ${channel}`,
+                ephemeral: true
+            });
+        } catch (error) {
+            console.error('Error sending message:', error);
+            await interaction.reply({
+                content: `❌ Failed to send message to ${channel}. Make sure I have permissions to send messages there.`,
+                ephemeral: true
             });
         }
     }
+});
+
+client.on('interactionCreate', async (interaction) => {
+    if (!interaction.isButton()) return;
     
-    if (interaction.isButton()) {
-        const customId = interaction.customId;
+    const customId = interaction.customId;
+    
+    if (customId.startsWith('shop_')) {
+        const category = customId.replace('shop_', '');
+        const data = shopData[category];
         
-        if (customId.startsWith('shop_')) {
-            const category = customId.replace('shop_', '');
-            const data = shopData[category];
+        if (data) {
+            const embed = new EmbedBuilder()
+                .setTitle(data.title)
+                .setDescription(data.description)
+                .setColor(data.color)
+                .setTimestamp();
             
-            if (data) {
-                const embed = new EmbedBuilder()
-                    .setTitle(data.title)
-                    .setDescription(data.description)
-                    .setColor(data.color)
-                    .setTimestamp();
-                
-                await interaction.reply({
-                    embeds: [embed],
-                    ephemeral: true
-                });
-            }
+            await interaction.reply({
+                embeds: [embed],
+                ephemeral: true
+            });
         }
     }
 });
