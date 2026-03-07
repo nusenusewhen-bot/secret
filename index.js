@@ -1,10 +1,11 @@
 require('dotenv').config();
-const { Client, GatewayIntentBits, SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType, PermissionFlagsBits } = require('discord.js');
+const { Client, GatewayIntentBits, SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType, PermissionFlagsBits, MessageType } = require('discord.js');
 
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
-        GatewayIntentBits.GuildMessages
+        GatewayIntentBits.GuildMessages,
+        GatewayIntentBits.MessageContent
     ]
 });
 
@@ -70,7 +71,6 @@ const shopData = {
 client.once('ready', async () => {
     console.log(`✅ Logged in as ${client.user.tag}`);
     
-    // Register slash commands
     const commands = [
         new SlashCommandBuilder()
             .setName('shop')
@@ -87,7 +87,14 @@ client.once('ready', async () => {
                 option.setName('message')
                     .setDescription('The message to send')
                     .setRequired(true))
-            .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+            .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+        new SlashCommandBuilder()
+            .setName('copy')
+            .setDescription('Copy a message content in copyable format (use forwarded messages for external servers)')
+            .addStringOption(option => 
+                option.setName('message')
+                    .setDescription('Message link or ID (forward message to this server first if from another server)')
+                    .setRequired(true))
     ];
     
     try {
@@ -97,6 +104,35 @@ client.once('ready', async () => {
         console.error('❌ Error registering commands:', error);
     }
 });
+
+// Helper function to parse message link or fetch by ID
+async function fetchMessage(guild, query) {
+    // Check if it's a message link
+    const linkRegex = /https:\/\/discord\.com\/channels\/(\d+)\/(\d+)\/(\d+)/;
+    const linkMatch = query.match(linkRegex);
+    
+    if (linkMatch) {
+        const [, guildId, channelId, messageId] = linkMatch;
+        const channel = await client.channels.fetch(channelId).catch(() => null);
+        if (!channel) return null;
+        return await channel.messages.fetch(messageId).catch(() => null);
+    }
+    
+    // Try to fetch by ID from current guild channels
+    const channels = await guild.channels.fetch();
+    for (const [, channel] of channels) {
+        if (channel.isTextBased()) {
+            try {
+                const message = await channel.messages.fetch(query);
+                if (message) return message;
+            } catch {
+                continue;
+            }
+        }
+    }
+    
+    return null;
+}
 
 client.on('interactionCreate', async (interaction) => {
     if (!interaction.isCommand()) return;
@@ -171,20 +207,125 @@ client.on('interactionCreate', async (interaction) => {
         } catch (error) {
             console.error('Error sending message:', error);
             await interaction.reply({
-                content: `❌ Failed to send message to ${channel}. Make sure I have permissions to send messages there.`,
+                content: `❌ Failed to send message to ${channel}. Make sure I have permissions.`,
                 ephemeral: true
             });
         }
     }
+    
+    if (interaction.commandName === 'copy') {
+        const query = interaction.options.getString('message');
+        
+        await interaction.deferReply({ ephemeral: true });
+        
+        const message = await fetchMessage(interaction.guild, query);
+        
+        if (!message) {
+            return await interaction.editReply({
+                content: '❌ Message not found. If it\'s from another server, forward it to this server first, then use the forwarded message link/ID.\n\n**How to forward:**\n1. Right-click message → Forward\n2. Select this channel\n3. Use `/copy` with the forwarded message link'
+            });
+        }
+        
+        let content = message.content;
+        let author = message.author;
+        let sourceInfo = `From ${author.tag}`;
+        
+        // Handle forwarded messages
+        if (message.type === MessageType.Forward && message.reference) {
+            // Try to get original content from embeds or content
+            if (message.embeds.length > 0) {
+                const embed = message.embeds[0];
+                content = embed.description || embed.title || message.content;
+                if (embed.author) {
+                    sourceInfo = `Forwarded from ${embed.author.name}`;
+                }
+            }
+        }
+        
+        if (!content && message.embeds.length > 0) {
+            // If no text content but has embeds, extract embed text
+            const embed = message.embeds[0];
+            content = embed.description || embed.title || '[Embed without text]';
+        }
+        
+        if (!content && message.attachments.size > 0) {
+            content = '[Message contains only attachments]';
+        }
+        
+        if (!content) {
+            return await interaction.editReply({
+                content: '❌ Could not extract text content from this message.'
+            });
+        }
+        
+        // Create copyable format using code block for PC and mobile
+        const copyableContent = `\`\`\`\n${content}\n\`\`\``;
+        
+        const embed = new EmbedBuilder()
+            .setTitle('📋 Copied Message')
+            .setDescription(copyableContent)
+            .setColor(0x2ecc71)
+            .setFooter({ text: `${sourceInfo} • Click the 📋 button to copy` })
+            .setTimestamp();
+        
+        const row = new ActionRowBuilder()
+            .addComponents(
+                new ButtonBuilder()
+                    .setCustomId(`copy_text_${interaction.id}`)
+                    .setLabel('Copy Text')
+                    .setEmoji('📋')
+                    .setStyle(ButtonStyle.Success)
+            );
+        
+        await interaction.editReply({
+            content: '✅ Message copied! Use the button below or tap the code block to copy:',
+            embeds: [embed],
+            components: [row]
+        });
+        
+        // Store content for button interaction
+        client.copiedMessages = client.copiedMessages || new Map();
+        client.copiedMessages.set(interaction.id, {
+            content: content,
+            author: author.tag,
+            timestamp: Date.now()
+        });
+        
+        // Cleanup after 10 minutes
+        setTimeout(() => {
+            client.copiedMessages.delete(interaction.id);
+        }, 600000);
+    }
 });
 
+// Handle copy button
 client.on('interactionCreate', async (interaction) => {
     if (!interaction.isButton()) return;
     
-    const customId = interaction.customId;
+    if (interaction.customId.startsWith('copy_text_')) {
+        const originalId = interaction.customId.replace('copy_text_', '');
+        const data = client.copiedMessages?.get(originalId);
+        
+        if (!data) {
+            return await interaction.reply({
+                content: '❌ Copy data expired. Please use `/copy` again.',
+                ephemeral: true
+            });
+        }
+        
+        await interaction.reply({
+            content: `📋 **Copy this:**\n\`\`\`\n${data.content}\n\`\`\``,
+            ephemeral: true
+        });
+    }
+});
+
+// Shop buttons handler
+client.on('interactionCreate', async (interaction) => {
+    if (!interaction.isButton()) return;
     
-    if (customId.startsWith('shop_')) {
-        const category = customId.replace('shop_', '');
+    if (interaction.customId.startsWith('shop_')) {
+        const category = interaction.customId.replace('shop_', '');
         const data = shopData[category];
         
         if (data) {
